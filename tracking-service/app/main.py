@@ -4,16 +4,18 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import cache, db
+from . import broker, cache, db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_pool()
     await cache.init_cache()
+    await broker.init_broker()
     try:
         yield
     finally:
+        await broker.close_broker()
         await cache.close_cache()
         await db.close_pool()
 
@@ -32,23 +34,36 @@ async def healthz():
 
 @app.post("/shipments/{tracking_no}")
 async def upsert(tracking_no: str, body: ShipmentIn):
+    # 1) запись в БД (upsert)
     row = await db.upsert_shipment(tracking_no, body.status)
+
+    # 2) обновление кэша
+    payload = {
+        "tracking_no": row["tracking_no"],
+        "status": row["status"],
+        "updated_at": row["updated_at"],
+    }
+    await cache.set_status(tracking_no, payload)
+
+    # 3) публикация события в брокер
+    await broker.publish_status_changed({
+        "event": "shipment.status_changed",
+        **payload,
+    })
+
     return {"source": "db", **row}
 
 
 @app.get("/shipments/{tracking_no}")
 async def get(tracking_no: str):
-    # 1) сначала кэш
     cached = await cache.get_status(tracking_no)
     if cached is not None:
         return {"source": "cache", **cached}
 
-    # 2) промах кэша — идём в БД
     row = await db.fetch_shipment(tracking_no)
     if row is None:
         raise HTTPException(status_code=404, detail="shipment not found")
 
-    # 3) прогреваем кэш
     await cache.set_status(tracking_no, {
         "tracking_no": row["tracking_no"],
         "status": row["status"],

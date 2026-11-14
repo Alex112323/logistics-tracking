@@ -5,13 +5,16 @@ services:
     container_name: tracking-service
     environment:
       DATABASE_URL: postgresql://tracking:tracking_pass@tracking-db:5432/logistics
-      REDIS_URL: redis://tracking-cache:6379/0    
+      REDIS_URL: redis://tracking-cache:6379/0
+      RABBITMQ_URL: amqp://guest:guest@tracking-broker:5672/  
     ports:
       - "8000:8000"
     depends_on:
       tracking-db:
         condition: service_healthy
       tracking-cache: 
+        condition: service_healthy
+      tracking-broker:
         condition: service_healthy
     networks:
       - tracking-net
