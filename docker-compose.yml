@@ -71,6 +71,17 @@ services:
       retries: 10
     networks:
       - tracking-net
+      
+  event-worker:
+    build: ./event-worker
+    container_name: event-worker
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@tracking-broker:5672/
+    depends_on:
+      tracking-broker:
+        condition: service_healthy
+    networks:
+      - tracking-net
 
 networks:
   tracking-net:

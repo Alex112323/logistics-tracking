@@ -52,3 +52,11 @@ async def fetch_shipment(tracking_no: str) -> dict | None:
         tracking_no,
     )
     return dict(row) if row else None
+
+async def delete_shipment(tracking_no: str) -> bool:
+    """Удалить посылку. Возвращает True, если строка была удалена."""
+    result = await get_pool().execute(
+        "DELETE FROM shipments WHERE tracking_no = $1",
+        tracking_no,
+    )
+    return result.endswith(" 1")

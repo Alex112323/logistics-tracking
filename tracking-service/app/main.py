@@ -70,3 +70,14 @@ async def get(tracking_no: str):
         "updated_at": row["updated_at"],
     })
     return {"source": "db", **row}
+
+@app.delete("/shipments/{tracking_no}")
+async def delete(tracking_no: str):
+    deleted = await db.delete_shipment(tracking_no)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="shipment not found")
+
+    # инвалидация кэша — данные удалены, кэш больше не актуален
+    await cache.get_cache().delete(cache.status_key(tracking_no))
+
+    return {"deleted": True, "tracking_no": tracking_no}
