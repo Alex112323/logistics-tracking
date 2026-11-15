@@ -24,14 +24,3 @@ async def init_broker() -> None:
 async def close_broker() -> None:
     if _connection is not None:
         await _connection.close()
-
-
-async def publish_status_changed(payload: dict) -> None:
-    if _exchange is None:
-        raise RuntimeError("Broker exchange is not initialized")
-    message = aio_pika.Message(
-        body=json.dumps(payload, default=str).encode(),
-        content_type="application/json",
-        delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-    )
-    await _exchange.publish(message, routing_key=settings.routing_key_status)

@@ -1,7 +1,7 @@
 import asyncpg
 
 from .config import settings
-
+import json
 _pool: asyncpg.Pool | None = None
 
 
@@ -83,3 +83,32 @@ async def delete_shipment(tracking_no: str) -> bool:
         tracking_no,
     )
     return result.endswith(" 1")
+
+async def upsert_shipment_with_outbox(
+    tracking_no: str,
+    status: str,
+    client_id: str | None,
+    event_type: str,
+    payload: dict,
+) -> dict:
+    """В одной транзакции: upsert в shipments + insert в outbox."""
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO shipments (tracking_no, status, client_id, updated_at)
+                VALUES ($1, $2, $3, now())
+                ON CONFLICT (tracking_no)
+                DO UPDATE SET status = EXCLUDED.status, updated_at = now()
+                RETURNING tracking_no, status, client_id, updated_at
+                """,
+                tracking_no, status, client_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO outbox (event_type, payload)
+                VALUES ($1, $2::jsonb)
+                """,
+                event_type, json.dumps(payload, default=str),
+            )
+            return dict(row)

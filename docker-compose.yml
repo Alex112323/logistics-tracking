@@ -306,6 +306,22 @@ services:
     networks:
       - db-net
 
+  outbox-dispatcher:
+    build: ./outbox-dispatcher
+    container_name: outbox-dispatcher
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      EXCHANGE_NAME: tracking
+      POLL_INTERVAL_MS: "100"
+      BATCH_SIZE: "100"
+    depends_on:
+      haproxy:
+        condition: service_healthy
+    networks:
+      - backend-net
+      - db-net
+
 networks:
   frontend-net:
     driver: bridge

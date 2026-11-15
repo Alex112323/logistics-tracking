@@ -14,3 +14,13 @@ CREATE TABLE IF NOT EXISTS shipments (
     client_id   TEXT REFERENCES users(username),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS outbox (
+    id          BIGSERIAL PRIMARY KEY,
+    event_type  TEXT NOT NULL,
+    payload     JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published   BOOLEAN NOT NULL DEFAULT false,
+    published_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox (id) WHERE published = false;

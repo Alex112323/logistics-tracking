@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from datetime import datetime, timezone
 
 from . import broker, cache, db
 from .auth import (
@@ -81,15 +82,21 @@ async def upsert(
     body: ShipmentIn,
     user: TokenData = Depends(require_role("courier")),
 ):
-    row = await db.upsert_shipment(tracking_no, body.status, body.client_id)
     payload = {
-        "tracking_no": row["tracking_no"],
-        "status": row["status"],
-        "client_id": row["client_id"],
-        "updated_at": row["updated_at"],
+        "tracking_no": tracking_no,
+        "status": body.status,
+        "client_id": body.client_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    row = await db.upsert_shipment_with_outbox(
+        tracking_no=tracking_no,
+        status=body.status,
+        client_id=body.client_id,
+        event_type="shipment.status_changed",
+        payload={"event": "shipment.status_changed", **payload},
+    )
+    # кэш обновляем best-effort после коммита
     await cache.set_status(tracking_no, payload)
-    await broker.publish_status_changed({"event": "shipment.status_changed", **payload})
     return {"source": "db", **row}
 
 

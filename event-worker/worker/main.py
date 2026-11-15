@@ -15,9 +15,8 @@ log = logging.getLogger("event-worker")
 
 
 async def handle_message(message: aio_pika.abc.AbstractIncomingMessage) -> None:
-    """Простое действие: логируем событие."""
-    async with message.process():   # автоматический ack при успехе, nack при исключении
-        payload = json.loads(message.body)
+    async with message.process():
+        payload = json.loads(message.body)   # ← добавь json.loads
         log.info(
             "event received: event=%s tracking_no=%s status=%s",
             payload.get("event"),
