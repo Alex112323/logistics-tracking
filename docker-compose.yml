@@ -3,13 +3,13 @@ services:
     build: ./tracking-service
     container_name: tracking-service
     environment:
-      DATABASE_URL: postgresql://tracking:tracking_pass@tracking-db:5432/logistics
+      DATABASE_URL: postgresql://postgres:postgres_pass@haproxy:5432/logistics
       REDIS_URL: redis://tracking-cache:6379/0
       RABBITMQ_URL: amqp://guest:guest@tracking-broker:5672/
     ports:
       - "8000:8000"
     depends_on:
-      tracking-db:
+      haproxy:
         condition: service_healthy
       tracking-cache:
         condition: service_healthy
@@ -31,23 +31,180 @@ services:
     networks:
       - backend-net
 
-  tracking-db:
-    image: postgres:16-alpine
-    container_name: tracking-db
-    environment:
-      POSTGRES_USER: tracking
-      POSTGRES_PASSWORD: tracking_pass
-      POSTGRES_DB: logistics
+  # ===== etcd (3 ноды) =====
+  etcd1:
+    image: quay.io/coreos/etcd:v3.5.0
+    container_name: etcd1
+    command: >
+      etcd --name etcd1
+      --data-dir /etcd-data
+      --listen-client-urls http://0.0.0.0:2379
+      --advertise-client-urls http://etcd1:2379
+      --listen-peer-urls http://0.0.0.0:2380
+      --initial-advertise-peer-urls http://etcd1:2380
+      --initial-cluster etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      --initial-cluster-token tracking-etcd
+      --initial-cluster-state new
     volumes:
-      - tracking_pg_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - etcd1_data:/etcd-data
+    networks:
+      - db-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tracking -d logistics"]
+      test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 5s
       timeout: 3s
       retries: 10
+      start_period: 10s
+
+  etcd2:
+    image: quay.io/coreos/etcd:v3.5.0
+    container_name: etcd2
+    command: >
+      etcd --name etcd2
+      --data-dir /etcd-data
+      --listen-client-urls http://0.0.0.0:2379
+      --advertise-client-urls http://etcd2:2379
+      --listen-peer-urls http://0.0.0.0:2380
+      --initial-advertise-peer-urls http://etcd2:2380
+      --initial-cluster etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      --initial-cluster-token tracking-etcd
+      --initial-cluster-state new
+    volumes:
+      - etcd2_data:/etcd-data
     networks:
       - db-net
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  etcd3:
+    image: quay.io/coreos/etcd:v3.5.0
+    container_name: etcd3
+    command: >
+      etcd --name etcd3
+      --data-dir /etcd-data
+      --listen-client-urls http://0.0.0.0:2379
+      --advertise-client-urls http://etcd3:2379
+      --listen-peer-urls http://0.0.0.0:2380
+      --initial-advertise-peer-urls http://etcd3:2380
+      --initial-cluster etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      --initial-cluster-token tracking-etcd
+      --initial-cluster-state new
+    volumes:
+      - etcd3_data:/etcd-data
+    networks:
+      - db-net
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ===== Patroni (3 ноды с Postgres) =====
+  patroni1:
+    build: ./patroni
+    container_name: patroni1
+    environment:
+      PATRONI_NAME: patroni1
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni1:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni1:8008
+    volumes:
+      - patroni1_data:/var/lib/postgresql/data-parent
+      - ./db/init.sql:/init.sql:ro                
+      - ./patroni/init-schema.sh:/init-schema.sh:ro
+      - ./patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+    depends_on:
+      etcd1:
+        condition: service_healthy
+      etcd2:
+        condition: service_healthy
+      etcd3:
+        condition: service_healthy
+    networks:
+      - db-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8008/primary || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  patroni2:
+    build: ./patroni
+    container_name: patroni2
+    environment:
+      PATRONI_NAME: patroni2
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni2:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni2:8008
+    volumes:
+      - patroni2_data:/var/lib/postgresql/data-parent
+      - ./db/init.sql:/init.sql:ro                 
+      - ./patroni/init-schema.sh:/init-schema.sh:ro
+      - ./patroni/patroni.yml:/etc/patroni/patroni.yml:ro  
+    depends_on:
+      patroni1:
+        condition: service_healthy
+    networks:
+      - db-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8008/replica || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  patroni3:
+    build: ./patroni
+    container_name: patroni3
+    environment:
+      PATRONI_NAME: patroni3
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni3:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni3:8008
+    volumes:
+      - patroni3_data:/var/lib/postgresql/data-parent
+      - ./db/init.sql:/init.sql:ro                   
+      - ./patroni/init-schema.sh:/init-schema.sh:ro
+      - ./patroni/patroni.yml:/etc/patroni/patroni.yml:ro
+    depends_on:
+      patroni2:
+        condition: service_healthy
+    networks:
+      - db-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8008/replica || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  # ===== HAProxy (единая точка входа) =====
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: haproxy
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5432:5432"
+      - "7001:7000"
+    networks:
+      - db-net
+    depends_on:
+      patroni1:
+        condition: service_healthy
+      patroni2:
+        condition: service_healthy
+      patroni3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   tracking-cache:
     image: redis:7-alpine
@@ -89,4 +246,9 @@ networks:
     internal: true
 
 volumes:
-  tracking_pg_data:
+  etcd1_data:
+  etcd2_data:
+  etcd3_data:
+  patroni1_data:
+  patroni2_data:
+  patroni3_data:
