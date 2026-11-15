@@ -36,7 +36,7 @@ async def run() -> None:
         ExchangeType.TOPIC,
         durable=True,
     )
-    queue = await channel.declare_queue(settings.queue_name, durable=True)
+    queue = await channel.declare_queue(settings.queue_name, durable=True, arguments={"x-queue-type": "quorum"} )
     await queue.bind(exchange, routing_key=settings.routing_key_status)
 
     log.info("worker started, queue=%s", settings.queue_name)

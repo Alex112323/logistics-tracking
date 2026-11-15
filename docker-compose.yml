@@ -5,15 +5,13 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres_pass@haproxy:5432/logistics
       REDIS_URL: redis://tracking-cache:6379/0
-      RABBITMQ_URL: amqp://guest:guest@tracking-broker:5672/
+      RABBITMQ_URL: amqp://guest:guest@haproxy:5672/
     ports:
       - "8000:8000"
     depends_on:
       haproxy:
         condition: service_healthy
       tracking-cache:
-        condition: service_healthy
-      tracking-broker:
         condition: service_healthy
     networks:
       - frontend-net
@@ -24,9 +22,9 @@ services:
     build: ./event-worker
     container_name: event-worker
     environment:
-      RABBITMQ_URL: amqp://guest:guest@tracking-broker:5672/
+      RABBITMQ_URL: amqp://guest:guest@haproxy:5672/
     depends_on:
-      tracking-broker:
+      haproxy:
         condition: service_healthy
     networks:
       - backend-net
@@ -181,7 +179,6 @@ services:
       retries: 30
       start_period: 30s
 
-  # ===== HAProxy (единая точка входа) =====
   haproxy:
     image: haproxy:2.9-alpine
     container_name: haproxy
@@ -192,6 +189,7 @@ services:
       - "7001:7000"
     networks:
       - db-net
+      - backend-net
     depends_on:
       patroni1:
         condition: service_healthy
@@ -200,7 +198,7 @@ services:
       patroni3:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432 || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432 && nc -z 127.0.0.1 5672 || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -217,21 +215,86 @@ services:
     networks:
       - backend-net
 
-  tracking-broker:
+  rabbitmq1:
     image: rabbitmq:3.13-management-alpine
-    container_name: tracking-broker
+    container_name: rabbitmq1
+    hostname: rabbitmq1
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-    ports:
-      - "15672:15672"  
+      RABBITMQ_ERLANG_COOKIE: "tracking-cluster-cookie"
+    volumes:
+      - rabbitmq1_data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro 
+    networks:
+      - backend-net
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+  rabbitmq2:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq2
+    hostname: rabbitmq2
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_ERLANG_COOKIE: "tracking-cluster-cookie"
+    volumes:
+      - rabbitmq2_data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro 
     networks:
       - backend-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq3:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq3
+    hostname: rabbitmq3
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_ERLANG_COOKIE: "tracking-cluster-cookie"
+    volumes:
+      - rabbitmq3_data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro 
+    networks:
+      - backend-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backup-scheduler:
+    image: prodrigestivill/postgres-backup-local:latest
+    container_name: backup-scheduler
+    restart: always
+    user: postgres:postgres
+    environment:
+      POSTGRES_HOST: haproxy
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: logistics
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_pass
+      SCHEDULE: "@daily"          
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      BACKUP_ON_START: "TRUE"     
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      haproxy:
+        condition: service_healthy
+    networks:
+      - db-net
 
 networks:
   frontend-net:
@@ -252,3 +315,6 @@ volumes:
   patroni1_data:
   patroni2_data:
   patroni3_data:
+  rabbitmq1_data:
+  rabbitmq2_data:
+  rabbitmq3_data:
