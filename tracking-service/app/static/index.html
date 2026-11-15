@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Tracking Service</title>
+    <style>
+        body { font-family: sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+        fieldset { margin-bottom: 1rem; }
+        label { display: inline-block; min-width: 140px; }
+        input, select, button { margin: 0.25rem 0; padding: 0.35rem; }
+        button { cursor: pointer; }
+        pre { background: #f4f4f4; padding: 0.75rem; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+        .row { margin: 0.5rem 0; }
+        .hidden { display: none; }
+        .muted { color: #666; font-size: 0.9em; }
+        .error { color: #b00020; }
+    </style>
+</head>
+<body>
+    <h1>Tracking Service</h1>
+    <section id="login-section">
+        <fieldset>
+            <legend>Вход</legend>
+            <div class="row">
+                <label>Логин</label>
+                <input id="username" autocomplete="username" />
+            </div>
+            <div class="row">
+                <label>Пароль</label>
+                <input id="password" type="password" autocomplete="current-password" />
+            </div>
+            <div class="row">
+                <button onclick="login()">Войти</button>
+                <span id="login-error" class="error"></span>
+            </div>
+            <div class="row">
+                <button onclick="login()">Войти</button>
+                <button onclick="showRegister()">Зарегистрироваться</button>
+                <span id="login-error" class="error"></span>
+            </div>
+        </fieldset>
+    </section>
+    <!-- Экран регистрации -->
+    <section id="register-section" class="hidden">
+        <fieldset>
+            <legend>Регистрация</legend>
+            <div class="row">
+                <label>Логин</label>
+                <input id="reg_username" autocomplete="username" />
+            </div>
+            <div class="row">
+                <label>Пароль</label>
+                <input id="reg_password" type="password" autocomplete="new-password" />
+            </div>
+            <div class="row">
+                <label>Роль</label>
+                <select id="reg_role">
+                    <option value="client">Клиент</option>
+                    <option value="courier">Курьер</option>
+                </select>
+            </div>
+            <div class="row">
+                <button onclick="register()">Создать аккаунт</button>
+                <button onclick="showLogin()">Назад</button>
+                <span id="register-error" class="error"></span>
+            </div>
+            <pre id="register-out"></pre>
+        </fieldset>
+    </section>
+    <!-- Экран операций (скрыт до логина) -->
+    <section id="app-section" class="hidden">
+        <p>Вы вошли как <b id="current-user">—</b> (<span id="current-role">—</span>)
+           <button onclick="logout()">Выйти</button></p>
+
+        <fieldset>
+            <legend>Операции с посылкой</legend>
+            <div class="row">
+                <label>Tracking No</label>
+                <input id="tracking_no" value="TRK123" />
+            </div>
+            <div class="row">
+                <label>Статус</label>
+                <select id="status">
+                    <option value="created">created</option>
+                    <option value="in_transit">in_transit</option>
+                    <option value="out_for_delivery">out_for_delivery</option>
+                    <option value="delivered">delivered</option>
+                    <option value="failed">failed</option>
+                </select>
+            </div>
+            <div class="row">
+                <label>Client ID</label>
+                <input id="client_id" placeholder="alice (только для курьера)" />
+            </div>
+            <div class="row">
+                <button onclick="upsert()">Создать / Обновить (курьер)</button>
+                <button onclick="get()">Получить (клиент)</button>
+                <button onclick="del()">Удалить (курьер)</button>
+            </div>
+            <pre id="out">—</pre>
+        </fieldset>
+    </section>
+
+    <script>
+        let token = null;
+        let currentUser = null;
+        let currentRole = null;
+
+        const $ = (id) => document.getElementById(id);
+
+        function setOut(data) {
+            $('out').textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        }
+
+        function authHeaders(extra = {}) {
+            const h = { 'Content-Type': 'application/json', ...extra };
+            if (token) h['Authorization'] = `Bearer ${token}`;
+            return h;
+        }
+
+        function showLogin() {
+            $('login-section').classList.remove('hidden');
+            $('app-section').classList.add('hidden');
+            $('login-error').textContent = '';
+        }
+
+        function showApp() {
+            $('login-section').classList.add('hidden');
+            $('app-section').classList.remove('hidden');
+            $('current-user').textContent = currentUser;
+            $('current-role').textContent = currentRole;
+        }
+
+        function parseJwt(t) {
+            try {
+                const payload = t.split('.')[1];
+                const json = decodeURIComponent(
+                    atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
+                        .split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+                );
+                return JSON.parse(json);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function login() {
+            const username = $('username').value.trim();
+            const password = $('password').value;
+            $('login-error').textContent = '';
+            try {
+                const res = await fetch('/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ username, password }),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                token = data.access_token;
+                const payload = parseJwt(token) || {};
+                currentUser = payload.sub || username;
+                currentRole = payload.role || '?';
+                showApp();
+                setOut({ ok: true, user: currentUser, role: currentRole });
+            } catch (e) {
+                token = null;
+                currentUser = currentRole = null;
+                $('login-error').textContent = `Не удалось войти: ${e.message}`;
+                showLogin();
+            }
+        }
+
+        function logout() {
+            token = null;
+            currentUser = currentRole = null;
+            $('out').textContent = '—';
+            showLogin();
+        }
+
+        async function upsert() {
+            const tn = $('tracking_no').value;
+            const body = { status: $('status').value };
+            const cid = $('client_id').value.trim();
+            if (cid) body.client_id = cid;
+            const res = await fetch(`/shipments/${tn}`, {
+                method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
+            });
+            setOut(await res.text());
+        }
+
+        async function get() {
+            const tn = $('tracking_no').value;
+            const res = await fetch(`/shipments/${tn}`, { headers: authHeaders() });
+            setOut(await res.text());
+        }
+
+        async function del() {
+            const tn = $('tracking_no').value;
+            const res = await fetch(`/shipments/${tn}`, {
+                method: 'DELETE', headers: authHeaders(),
+            });
+            setOut(await res.text());
+        }
+        function showRegister() {
+            $('login-section').classList.add('hidden');
+            $('register-section').classList.remove('hidden');
+            $('register-error').textContent = '';
+            $('register-out').textContent = '';
+        }
+
+        async function register() {
+            const username = $('reg_username').value.trim();
+            const password = $('reg_password').value;
+            const role = $('reg_role').value;
+            $('register-error').textContent = '';
+            try {
+                const res = await fetch('/users/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, role }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                $('register-out').textContent = JSON.stringify(data, null, 2);
+                if (data.is_active) {
+                    // клиент — можно сразу логиниться
+                    $('username').value = username;
+                    $('password').value = password;
+                    setTimeout(showLogin, 1500);
+                }
+            } catch (e) {
+                $('register-error').textContent = `Ошибка: ${e.message}`;
+            }
+        }
+        // стартовое состояние
+        showLogin();
+    </script>
+</body>
+</html>

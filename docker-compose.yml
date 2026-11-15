@@ -3,9 +3,12 @@ services:
     build: ./tracking-service
     container_name: tracking-service
     environment:
-      DATABASE_URL: postgresql://postgres:postgres_pass@haproxy:5432/logistics
-      REDIS_URL: redis://tracking-cache:6379/0
-      RABBITMQ_URL: amqp://guest:guest@haproxy:5672/
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     ports:
       - "8000:8000"
     depends_on:
@@ -22,14 +25,13 @@ services:
     build: ./event-worker
     container_name: event-worker
     environment:
-      RABBITMQ_URL: amqp://guest:guest@haproxy:5672/
+      RABBITMQ_URL: ${RABBITMQ_URL}
     depends_on:
       haproxy:
         condition: service_healthy
     networks:
       - backend-net
 
-  # ===== etcd (3 ноды) =====
   etcd1:
     image: quay.io/coreos/etcd:v3.5.0
     container_name: etcd1
@@ -102,7 +104,6 @@ services:
       retries: 10
       start_period: 10s
 
-  # ===== Patroni (3 ноды с Postgres) =====
   patroni1:
     build: ./patroni
     container_name: patroni1
@@ -110,6 +111,9 @@ services:
       PATRONI_NAME: patroni1
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni1:5432
       PATRONI_RESTAPI_CONNECT_ADDRESS: patroni1:8008
+      PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      PATRONI_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+      PATRONI_REWIND_PASSWORD: ${POSTGRES_REWIND_PASSWORD}
     volumes:
       - patroni1_data:/var/lib/postgresql/data-parent
       - ./db/init.sql:/init.sql:ro                
@@ -138,6 +142,9 @@ services:
       PATRONI_NAME: patroni2
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni2:5432
       PATRONI_RESTAPI_CONNECT_ADDRESS: patroni2:8008
+      PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      PATRONI_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+      PATRONI_REWIND_PASSWORD: ${POSTGRES_REWIND_PASSWORD}
     volumes:
       - patroni2_data:/var/lib/postgresql/data-parent
       - ./db/init.sql:/init.sql:ro                 
@@ -162,6 +169,9 @@ services:
       PATRONI_NAME: patroni3
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni3:5432
       PATRONI_RESTAPI_CONNECT_ADDRESS: patroni3:8008
+      PATRONI_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      PATRONI_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+      PATRONI_REWIND_PASSWORD: ${POSTGRES_REWIND_PASSWORD}
     volumes:
       - patroni3_data:/var/lib/postgresql/data-parent
       - ./db/init.sql:/init.sql:ro                   
@@ -220,9 +230,9 @@ services:
     container_name: rabbitmq1
     hostname: rabbitmq1
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_ERLANG_COOKIE: "tracking-cluster-cookie"
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
     volumes:
       - rabbitmq1_data:/var/lib/rabbitmq
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro 
@@ -239,9 +249,9 @@ services:
     container_name: rabbitmq2
     hostname: rabbitmq2
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_ERLANG_COOKIE: "tracking-cluster-cookie"
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
     volumes:
       - rabbitmq2_data:/var/lib/rabbitmq
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro 
@@ -258,9 +268,9 @@ services:
     container_name: rabbitmq3
     hostname: rabbitmq3
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_ERLANG_COOKIE: "tracking-cluster-cookie"
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
     volumes:
       - rabbitmq3_data:/var/lib/rabbitmq
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro 
@@ -281,8 +291,8 @@ services:
       POSTGRES_HOST: haproxy
       POSTGRES_PORT: 5432
       POSTGRES_DB: logistics
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_pass
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       SCHEDULE: "@daily"          
       BACKUP_KEEP_DAYS: 7
       BACKUP_KEEP_WEEKS: 4

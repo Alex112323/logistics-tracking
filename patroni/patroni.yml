@@ -41,10 +41,10 @@ postgresql:
   authentication:
     replication:
       username: replicator
-      password: replicator_pass
+      password: ${PATRONI_REPLICATION_PASSWORD}   
     superuser:
       username: postgres
-      password: postgres_pass
+      password: ${PATRONI_SUPERUSER_PASSWORD}
     rewind:
       username: rewind_user
-      password: rewind_pass
+      password: ${PATRONI_REWIND_PASSWORD}

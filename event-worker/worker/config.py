@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    rabbitmq_url: str = "amqp://guest:guest@tracking-broker:5672/"
+    rabbitmq_url: str
     exchange_name: str = "tracking"
     queue_name: str = "events.raw"
     routing_key_status: str = "shipment.status_changed"

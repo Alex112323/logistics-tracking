@@ -26,50 +26,58 @@ def get_pool() -> asyncpg.Pool:
     return _pool
 
 
-async def upsert_shipment(tracking_no: str, status: str) -> dict:
-    """Создать или обновить посылку. Один запрос, без SELECT."""
+async def create_user(username: str, hashed_password: str, role: str, is_active: bool = True) -> dict | None:
     row = await get_pool().fetchrow(
         """
-        INSERT INTO shipments (tracking_no, status, updated_at)
-        VALUES ($1, $2, now())
+        INSERT INTO users (username, hashed_password, role, is_active)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (username) DO NOTHING
+        RETURNING id, username, role, is_active
+        """,
+        username, hashed_password, role, is_active,
+    )
+    return dict(row) if row else None
+
+
+async def get_user_by_username(username: str) -> dict | None:
+    row = await get_pool().fetchrow(
+        "SELECT id, username, hashed_password, role, is_active FROM users WHERE username = $1",
+        username,
+    )
+    return dict(row) if row else None
+
+
+async def approve_user(username: str) -> dict | None:
+    row = await get_pool().fetchrow(
+        "UPDATE users SET is_active = true WHERE username = $1 RETURNING id, username, role, is_active",
+        username,
+    )
+    return dict(row) if row else None
+
+
+async def upsert_shipment(tracking_no: str, status: str, client_id: str | None = None) -> dict:
+    row = await get_pool().fetchrow(
+        """
+        INSERT INTO shipments (tracking_no, status, client_id, updated_at)
+        VALUES ($1, $2, $3, now())
         ON CONFLICT (tracking_no)
         DO UPDATE SET status = EXCLUDED.status, updated_at = now()
-        RETURNING tracking_no, status, updated_at
+        RETURNING tracking_no, status, client_id, updated_at
         """,
-        tracking_no,
-        status,
+        tracking_no, status, client_id,
     )
     return dict(row)
 
 
-async def _execute_with_retry(func, *args, retries: int = 3, delay: float = 1.0):
-    """Retry для операций с БД: при падении master пробуем переподключиться."""
-    last_error = None
-    for attempt in range(retries):
-        try:
-            return await func(*args)
-        except (asyncpg.ConnectionDoesNotExistError, asyncpg.ConnectionFailureError, OSError) as e:
-            last_error = e
-            if attempt < retries - 1:
-                await asyncio.sleep(delay)
-                # пересоздаём пул — старый мог умереть вместе с master
-                await close_pool()
-                await init_pool()
-    raise last_error
-
-
 async def fetch_shipment(tracking_no: str) -> dict | None:
-    async def _query():
-        row = await get_pool().fetchrow(
-            "SELECT tracking_no, status, updated_at FROM shipments WHERE tracking_no = $1",
-            tracking_no,
-        )
-        return dict(row) if row else None
+    row = await get_pool().fetchrow(
+        "SELECT tracking_no, status, client_id, updated_at FROM shipments WHERE tracking_no = $1",
+        tracking_no,
+    )
+    return dict(row) if row else None
 
-    return await _execute_with_retry(_query)
 
 async def delete_shipment(tracking_no: str) -> bool:
-    """Удалить посылку. Возвращает True, если строка была удалена."""
     result = await get_pool().execute(
         "DELETE FROM shipments WHERE tracking_no = $1",
         tracking_no,
